@@ -12,31 +12,48 @@ metadata:
   namespace: elkstack
 data:
   elasticsearch.yml: |
-    cluster.name: my-elastic-cluster
-    network.host: "0.0.0.0"
+    # cluster.name: my-elastic-cluster
+    # network.host: "0.0.0.0"
+    # bootstrap.memory_lock: false
+    # discovery.zen.ping.unicast.hosts: elasticsearch-cluster
+    # discovery.zen.minimum_master_nodes: 1
+    # xpack.security.enabled: false
+    # xpack.monitoring.enabled: true
+
+    cluster.name: ${CLUSTER_NAME}
+    network.host: 0.0.0.0
+    node.name: ${NODE_NAME}
     bootstrap.memory_lock: false
-    discovery.zen.ping.unicast.hosts: elasticsearch-cluster
+    discovery.zen.ping.unicast.hosts: ${HOST_NAME}
     discovery.zen.minimum_master_nodes: 1
-    xpack.security.enabled: false
-    xpack.monitoring.enabled: true
-  ES_JAVA_OPTS: -Xms8g -Xmx8g
+    discovery.seed_hosts: ${NODE_LIST}
+    cluster.initial_master_nodes: ${MASTER_NODES}
+
+    node:
+      master: true
+      data: false
+      ingest: false
+
+    xpack.security.enabled: true
+    xpack.monitoring.collection.enabled: true
+  ES_JAVA_OPTS: -Xms512m -Xmx512m
+
+# ---
+# apiVersion: storage.k8s.io/v1
+# kind: StorageClass
+# metadata:
+#   name: alicloud-nas-elasticsearch
+# mountOptions:
+#   - nolock,tcp,noresvport
+#   - vers=3
+# parameters:
+#   server: "xxx.cn-hangzhou.nas.aliyuncs.com:/elk/elasticsearch/"
+#   driver: flexvolume
+# provisioner: alicloud/nas
+# reclaimPolicy: Retain
 
 ---
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: alicloud-nas-elasticsearch
-mountOptions:
-  - nolock,tcp,noresvport
-  - vers=3
-parameters:
-  server: "xxx.cn-hangzhou.nas.aliyuncs.com:/elk/elasticsearch/"
-  driver: flexvolume
-provisioner: alicloud/nas
-reclaimPolicy: Retain
-
----
-apiVersion: apps/v1beta1
+apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: enode
@@ -48,10 +65,12 @@ spec:
     type: RollingUpdate
   selector:
     matchLabels:
+      # k8s-app: es-cluster
       app: es-cluster
   template:
     metadata:
       labels:
+        # k8s-app: es-cluster
         app: es-cluster
     spec:
       securityContext:
@@ -65,13 +84,22 @@ spec:
           command: ["sysctl", "-w", "vm.max_map_count=262144"]
       containers:
         - name: elasticsearch
+          # resources:
+          #   requests:
+          #     # cpu: 4
+          #     cpu: 2
+          #     # memory: 8Gi
+          #     memory: 4Gi
+          #   limits:
+          #     # cpu: 6
+          #     cpu: 4
+          #     # memory: 10Gi
+          #     memory: 6Gi
           resources:
-            requests:
-              cpu: 4
-              memory: 8Gi
             limits:
-              cpu: 6
-              memory: 10Gi
+              cpu: 1000m
+            requests:
+              cpu: 100m
           securityContext:
             privileged: true
             runAsUser: 1000
@@ -79,25 +107,35 @@ spec:
               add:
                 - IPC_LOCK
                 - SYS_RESOURCE
-          image: docker.elastic.co/elasticsearch/elasticsearch:7.3.0
+          image: docker.elastic.co/elasticsearch/elasticsearch:7.6.2
           imagePullPolicy: IfNotPresent
           env:
+            - name: CLUSTER_NAME
+              value: elasticsearch
+            - name: NODE_NAME
+              value: enode-1
+            - name: HOST_NAME
+              value: elasticsearch-cluster
+            - name: NODE_LIST
+              value: enode-0,enode-1
+            - name: MASTER_NODES
+              value: elasticsearch-master
             - name: ES_JAVA_OPTS
               valueFrom:
                 configMapKeyRef:
                   name: es-config
                   key: ES_JAVA_OPTS
-          readinessProbe:
-            httpGet:
-              scheme: HTTP
-              path: /_cluster/health?local=true
-              port: 9200
-            initialDelaySeconds: 5
-          livenessProbe:
-            httpGet:
-              scheme: HTTP
-              path: /_cluster/health?local=true
-              port: 9200
+          # readinessProbe:
+          #   httpGet:
+          #     scheme: HTTP
+          #     path: /_cluster/health?local=true
+          #     port: 9200
+          #   initialDelaySeconds: 5
+          # livenessProbe:
+          #   httpGet:
+          #     scheme: HTTP
+          #     path: /_cluster/health?local=true
+          #     port: 9200
           ports:
             - containerPort: 9200
               name: es-http
@@ -121,25 +159,29 @@ spec:
   volumeClaimTemplates:
     - metadata:
         name: es-data
+        labels:
+          app: es-cluster
       spec:
         accessModes: ["ReadWriteOnce"]
-        storageClassName: alicloud-nas-elasticsearch
+        storageClassName: standard
         resources:
           requests:
-            storage: 500Gi
+            # storage: 500Gi
+            storage: 5Gi
     - metadata:
         name: es-logs
       spec:
         accessModes: ["ReadWriteOnce"]
-        storageClassName: alicloud-nas-elasticsearch
+        storageClassName: standard
         resources:
           requests:
-            storage: 10Gi
+            storage: 5Gi
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
+  name: elasticsearch
   namespace: elkstack
 spec:
   selector:

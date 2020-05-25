@@ -1,19 +1,20 @@
+---
+apiVersion: v1
 kind: ConfigMap
 metadata:
   name: broker-config
-  namespace: elkstack
-apiVersion: v1
+  namespace: monitoring
 data:
   server.properties: |-
     ############################# Log Basics #############################
     # A comma seperated list of directories under which to store log files
     # Overrides log.dir
     log.dirs=/opt/kafka/data
-    # The elkstack number of log partitions per topic. More partitions allow greater
+    # The default number of log partitions per topic. More partitions allow greater
     # parallelism for consumption, but this will also result in more files across
     # the brokers.
     num.partitions=12
-    elkstack.replication.factor=3
+    default.replication.factor=3
     min.insync.replicas=2
     auto.create.topics.enable=true
     # The number of threads per data directory to be used for log recovery at startup and flushing at shutdown.
@@ -22,6 +23,7 @@ data:
     ############################# Server Basics #############################
     # The id of the broker. This must be set to a unique integer for each broker.
     #init#broker.id=#init#
+    broker.id=1
     #init#broker.rack=#init#
     ############################# Socket Server Settings #############################
     # The address the socket server listens on. It will get the value returned from
@@ -37,20 +39,20 @@ data:
     # returned from java.net.InetAddress.getCanonicalHostName().
     #advertised.listeners=PLAINTEXT://your.host.name:9092
     #init#advertised.listeners=PLAINTEXT://#init#
-    # Maps listener names to security protocols, the elkstack is for them to be the same. See the config documentation for more details
+    # Maps listener names to security protocols, the default is for them to be the same. See the config documentation for more details
     #listener.security.protocol.map=PLAINTEXT:PLAINTEXT,SSL:SSL,SASL_PLAINTEXT:SASL_PLAINTEXT,SASL_SSL:SASL_SSL
     listener.security.protocol.map=PLAINTEXT:PLAINTEXT,SSL:SSL,SASL_PLAINTEXT:SASL_PLAINTEXT,SASL_SSL:SASL_SSL,OUTSIDE:PLAINTEXT
     inter.broker.listener.name=PLAINTEXT
     # The number of threads that the server uses for receiving requests from the network and sending responses to the network
-    #num.network.threads=3
+    num.network.threads=3
     # The number of threads that the server uses for processing requests, which may include disk I/O
-    #num.io.threads=8
+    num.io.threads=8
     # The send buffer (SO_SNDBUF) used by the socket server
-    #socket.send.buffer.bytes=102400
+    socket.send.buffer.bytes=102400
     # The receive buffer (SO_RCVBUF) used by the socket server
-    #socket.receive.buffer.bytes=102400
+    socket.receive.buffer.bytes=102400
     # The maximum size of a request that the socket server will accept (protection against OOM)
-    #socket.request.max.bytes=104857600
+    socket.request.max.bytes=104857600
     ############################# Internal Topic Settings  #############################
     # The replication factor for the group metadata internal topics "__consumer_offsets" and "__transaction_state"
     # For anything other than development testing, a value greater than 1 is recommended for to ensure availability such as 3.
@@ -58,7 +60,7 @@ data:
     #transaction.state.log.replication.factor=1
     #transaction.state.log.min.isr=1
     ############################# Log Flush Policy #############################
-    # Messages are immediately written to the filesystem but by elkstack we only fsync() to sync
+    # Messages are immediately written to the filesystem but by default we only fsync() to sync
     # the OS cache lazily. The following configurations control the flush of data to disk.
     # There are a few important trade-offs here:
     #    1. Durability: Unflushed data may be lost if you are not using replication.
@@ -75,7 +77,7 @@ data:
     # be set to delete segments after a period of time, or after a given size has accumulated.
     # A segment will be deleted whenever *either* of these criteria are met. Deletion always happens
     # from the end of the log.
-    # https://cwiki.apache.org/confluence/display/KAFKA/KIP-186%3A+Increase+offsets+retention+elkstack+to+7+days
+    # https://cwiki.apache.org/confluence/display/KAFKA/KIP-186%3A+Increase+offsets+retention+default+to+7+days
     offsets.retention.minutes=10080
     # The minimum age of a log file to be eligible for deletion due to age
     log.retention.hours=24
@@ -96,16 +98,17 @@ data:
     # root directory for all kafka znodes.
     zookeeper.connect=zookeeper-cluster:2181
     # Timeout in ms for connecting to zookeeper
-    #zookeeper.connection.timeout.ms=6000
+    zookeeper.connection.timeout.ms=6000
     ############################# Group Coordinator Settings #############################
     # The following configuration specifies the time, in milliseconds, that the GroupCoordinator will delay the initial consumer rebalance.
     # The rebalance will be further delayed by the value of group.initial.rebalance.delay.ms as new members join the group, up to a maximum of max.poll.interval.ms.
-    # The elkstack value for this is 3 seconds.
+    # The default value for this is 3 seconds.
     # We override this to 0 here as it makes for a better out-of-the-box experience for development and testing.
-    # However, in production environments the elkstack value of 3 seconds is more suitable as this will help to avoid unnecessary, and potentially expensive, rebalances during application startup.
-    #group.initial.rebalance.delay.ms=0
+    # However, in production environments the default value of 3 seconds is more suitable as this will help to avoid unnecessary, and potentially expensive, rebalances during application startup.
+    group.initial.rebalance.delay.ms=0
+    message.max.bytes=100000000
 
----
+# ---
 # apiVersion: storage.k8s.io/v1
 # kind: StorageClass
 # metadata:
@@ -124,37 +127,68 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: kafka
-  namespace: elkstack
+  namespace: monitoring
 spec:
   selector:
     matchLabels:
       app: kafka
   serviceName: bootstrap-kafka
   replicas: 1
-  updateStrategy:
-    type: RollingUpdate
-  podManagementPolicy: Parallel
   template:
     metadata:
       labels:
         app: kafka
-      annotations:
     spec:
       terminationGracePeriodSeconds: 30
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+        - name: init-sysctl
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          command: ["sysctl", "-w", "vm.max_map_count=262144"]
       containers:
       - name: kafka-broker
-        image: russellgao/kafka:0.10.2.0
+        image: wurstmeister/kafka:latest
         ports:
         - name: inside
           containerPort: 9092
         - name: outside
           containerPort: 9094
-        resources:
-          requests:
-            cpu: 0.1
-            memory: 1024Mi
-          limits:
-            memory: 1536Mi
+        env:
+        - name: HOSTNAME_COMMAND
+          value : "docker info | grep ^Name: | cut -d' ' -f 2"
+        - name: KAFKA_ZOOKEEPER_CONNECT
+          value: zookeeper-cluster:2181
+        - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+          value: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT
+        - name: KAFKA_ADVERTISED_LISTENERS
+          value: INSIDE://:9092,OUTSIDE://_{HOSTNAME_COMMAND}:9094
+        - name: KAFKA_LISTENERS
+          value: INSIDE://:9092,OUTSIDE://:9094
+        - name: KAFKA_INTER_BROKER_LISTENER_NAME
+          value: INSIDE
+        
+        # - name: KAFKA_CREATE_TOPICS
+        #   value: "test-topic:3:2:compact"
+        - name: KAFKA_LOG_DIRS
+          value: /opt/kafka/logs
+        - name: KAFKA_BROKER_ID
+          value: "1"
+        - name: KAFKA_JMX_PORT
+          value: "5555"
+        - name: KAFKA_CLEANUP_POLICY
+          value: "compact"
+        # command: ["/opt/kafka/bin/kafka-server-start.sh"]
+        # args: ["/opt/kafka/config/server.properties"]
+        # resources:
+        #   requests:
+        #     cpu: 0.1
+        #     memory: 1024Mi
+        #   limits:
+        #     memory: 1536Mi
         # readinessProbe:
         #   tcpSocket:
         #     port: 9092
@@ -168,10 +202,10 @@ spec:
         #   initialDelaySeconds: 15
         #   periodSeconds: 20
         volumeMounts:
-        - name: config
-          mountPath: /opt/kafka/config/server.properties
-          readOnly: true
-          subPath: server.properties
+        # - name: config
+        #   mountPath: /opt/kafka/config/server.properties
+        #   readOnly: true
+        #   subPath: server.properties
         - name: kafka-data
           mountPath: /opt/kafka/data
         - name: kafka-logs
@@ -185,7 +219,7 @@ spec:
       name: kafka-data
     spec:
       accessModes: [ "ReadWriteOnce" ]
-      storageClassName: standard
+      storageClassName: managed-nfs-storage
       resources:
         requests:
           storage: 10Gi
@@ -193,7 +227,7 @@ spec:
       name: kafka-logs
     spec:
       accessModes: ["ReadWriteOnce"]
-      storageClassName: standard
+      storageClassName: managed-nfs-storage
       resources:
         requests:
           storage: 10Gi
@@ -203,9 +237,10 @@ apiVersion: v1
 kind: Service
 metadata:
   name: bootstrap-kafka
-  namespace: elkstack
+  namespace: monitoring
 spec:
   ports:
   - port: 9092
   selector:
     app: kafka
+  type: LoadBalancer

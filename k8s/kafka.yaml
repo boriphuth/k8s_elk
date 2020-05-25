@@ -1,7 +1,7 @@
 kind: ConfigMap
 metadata:
   name: broker-config
-  namespace: elkstack
+  namespace: monitoring
 apiVersion: v1
 data:
   server.properties: |-
@@ -9,11 +9,11 @@ data:
     # A comma seperated list of directories under which to store log files
     # Overrides log.dir
     log.dirs=/opt/kafka/data
-    # The elkstack number of log partitions per topic. More partitions allow greater
+    # The monitoring number of log partitions per topic. More partitions allow greater
     # parallelism for consumption, but this will also result in more files across
     # the brokers.
     num.partitions=12
-    elkstack.replication.factor=3
+    monitoring.replication.factor=3
     min.insync.replicas=2
     auto.create.topics.enable=true
     # The number of threads per data directory to be used for log recovery at startup and flushing at shutdown.
@@ -37,7 +37,7 @@ data:
     # returned from java.net.InetAddress.getCanonicalHostName().
     #advertised.listeners=PLAINTEXT://your.host.name:9092
     #init#advertised.listeners=PLAINTEXT://#init#
-    # Maps listener names to security protocols, the elkstack is for them to be the same. See the config documentation for more details
+    # Maps listener names to security protocols, the monitoring is for them to be the same. See the config documentation for more details
     #listener.security.protocol.map=PLAINTEXT:PLAINTEXT,SSL:SSL,SASL_PLAINTEXT:SASL_PLAINTEXT,SASL_SSL:SASL_SSL
     listener.security.protocol.map=PLAINTEXT:PLAINTEXT,SSL:SSL,SASL_PLAINTEXT:SASL_PLAINTEXT,SASL_SSL:SASL_SSL,OUTSIDE:PLAINTEXT
     inter.broker.listener.name=PLAINTEXT
@@ -58,7 +58,7 @@ data:
     #transaction.state.log.replication.factor=1
     #transaction.state.log.min.isr=1
     ############################# Log Flush Policy #############################
-    # Messages are immediately written to the filesystem but by elkstack we only fsync() to sync
+    # Messages are immediately written to the filesystem but by monitoring we only fsync() to sync
     # the OS cache lazily. The following configurations control the flush of data to disk.
     # There are a few important trade-offs here:
     #    1. Durability: Unflushed data may be lost if you are not using replication.
@@ -75,7 +75,7 @@ data:
     # be set to delete segments after a period of time, or after a given size has accumulated.
     # A segment will be deleted whenever *either* of these criteria are met. Deletion always happens
     # from the end of the log.
-    # https://cwiki.apache.org/confluence/display/KAFKA/KIP-186%3A+Increase+offsets+retention+elkstack+to+7+days
+    # https://cwiki.apache.org/confluence/display/KAFKA/KIP-186%3A+Increase+offsets+retention+monitoring+to+7+days
     offsets.retention.minutes=10080
     # The minimum age of a log file to be eligible for deletion due to age
     log.retention.hours=24
@@ -100,9 +100,9 @@ data:
     ############################# Group Coordinator Settings #############################
     # The following configuration specifies the time, in milliseconds, that the GroupCoordinator will delay the initial consumer rebalance.
     # The rebalance will be further delayed by the value of group.initial.rebalance.delay.ms as new members join the group, up to a maximum of max.poll.interval.ms.
-    # The elkstack value for this is 3 seconds.
+    # The monitoring value for this is 3 seconds.
     # We override this to 0 here as it makes for a better out-of-the-box experience for development and testing.
-    # However, in production environments the elkstack value of 3 seconds is more suitable as this will help to avoid unnecessary, and potentially expensive, rebalances during application startup.
+    # However, in production environments the monitoring value of 3 seconds is more suitable as this will help to avoid unnecessary, and potentially expensive, rebalances during application startup.
     #group.initial.rebalance.delay.ms=0
 
 ---
@@ -124,7 +124,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: kafka
-  namespace: elkstack
+  namespace: monitoring
 spec:
   selector:
     matchLabels:
@@ -185,7 +185,7 @@ spec:
       name: kafka-data
     spec:
       accessModes: [ "ReadWriteOnce" ]
-      storageClassName: standard
+      storageClassName: managed-nfs-storage
       resources:
         requests:
           storage: 10Gi
@@ -193,7 +193,7 @@ spec:
       name: kafka-logs
     spec:
       accessModes: ["ReadWriteOnce"]
-      storageClassName: standard
+      storageClassName: managed-nfs-storage
       resources:
         requests:
           storage: 10Gi
@@ -203,7 +203,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: bootstrap-kafka
-  namespace: elkstack
+  namespace: monitoring
 spec:
   ports:
   - port: 9092

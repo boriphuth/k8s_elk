@@ -1,15 +1,9 @@
 ---
 apiVersion: v1
-kind: Namespace
-metadata:
-  name: elkstack
-
----
-apiVersion: v1
 kind: ConfigMap
 metadata:
   name: zookeeper-config
-  namespace: elkstack
+  namespace: monitoring
 data:
   ZOO_USER: zookeeper
   ZOO_CONF_DIR: /conf
@@ -45,7 +39,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: zookeeper
-  namespace: elkstack
+  namespace: monitoring
 spec:
   serviceName: zookeeper-cluster
   replicas: 1
@@ -59,6 +53,15 @@ spec:
       labels:
         app: zookeeper-cluster
     spec:
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+        - name: init-sysctl
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          command: ["sysctl", "-w", "vm.max_map_count=262144"]
       containers:
         - name: zookeeper
           resources:
@@ -165,15 +168,15 @@ spec:
         name: zookeeper-data
       spec:
         accessModes: ["ReadWriteOnce"]
-        storageClassName: standard
+        storageClassName: managed-nfs-storage
         resources:
           requests:
-            storage: 10Gi
+            storage: 30Gi
     - metadata:
         name: zookeeper-datalog
       spec:
         accessModes: ["ReadWriteOnce"]
-        storageClassName: standard
+        storageClassName: managed-nfs-storage
         resources:
           requests:
             storage: 10Gi
@@ -181,7 +184,7 @@ spec:
         name: zookeeper-logs
       spec:
         accessModes: ["ReadWriteOnce"]
-        storageClassName: standard
+        storageClassName: managed-nfs-storage
         resources:
           requests:
             storage: 10Gi
@@ -191,7 +194,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: zookeeper-cluster
-  namespace: elkstack
+  namespace: monitoring
 spec:
   selector:
     app: zookeeper-cluster
